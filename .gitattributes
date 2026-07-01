@@ -1,0 +1,5 @@
+# Keep Unix line endings for scripts so they run on macOS/Linux after clone.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.png binary
+*.jpg binary

@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.log
+.deps_ok
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+# never commit secrets/sessions (these live in ~/.dunamis anyway)
+gemini_cookies.json
+chrome-profile*/

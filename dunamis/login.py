@@ -2,9 +2,10 @@
 Dunamis v3 — one-time Google login.
 
 Opens a real Chrome window to gemini.google.com and waits for you to sign in to
-your Google account. Once you're in, it harvests the session cookies to
-~/.dunamis/gemini_cookies.json and closes. After this the server runs keyless
-(pure HTTP, no browser) using those cookies.
+your Google account. It watches for the actual Google **session cookie**
+(__Secure-1PSID) to appear, so the window stays open the whole time you're
+signing in and only closes once you're genuinely logged in. Then it harvests the
+cookies to ~/.dunamis/gemini_cookies.json and the server runs keyless from there.
 
 Run:
     python -m dunamis.login          (or: python dunamis/login.py)
@@ -18,10 +19,20 @@ import sys
 
 PROFILE = os.path.join(os.path.expanduser("~"), ".dunamis", "chrome-profile-v3")
 OUT = os.path.join(os.path.expanduser("~"), ".dunamis", "gemini_cookies.json")
-EDITOR = '.ql-editor[contenteditable="true"]'
+
+
+def _valid_psid(jar: dict):
+    """A real signed-in __Secure-1PSID is long; logged-out visits don't set it."""
+    v = jar.get("__Secure-1PSID") or ""
+    return v if len(v) > 40 else None
 
 
 async def main(timeout_s: int = 300) -> int:
+    # Windows consoles default to cp1252 and choke on non-ASCII; keep output safe.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     try:
         from playwright.async_api import async_playwright
     except ImportError:
@@ -29,6 +40,13 @@ async def main(timeout_s: int = 300) -> int:
         return 2
 
     os.makedirs(PROFILE, exist_ok=True)
+    # Clear any stale single-instance lock from a previous run so we can reopen.
+    for lock in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        try:
+            os.remove(os.path.join(PROFILE, lock))
+        except OSError:
+            pass
+
     pw = await async_playwright().start()
     try:
         ctx = await pw.chromium.launch_persistent_context(
@@ -44,31 +62,48 @@ async def main(timeout_s: int = 300) -> int:
 
     page = ctx.pages[0] if ctx.pages else await ctx.new_page()
     try:
-        await page.goto("https://gemini.google.com/app", wait_until="domcontentloaded", timeout=60000)
+        await page.goto("https://gemini.google.com/app",
+                        wait_until="domcontentloaded", timeout=60000)
     except Exception:
         pass
 
-    print("\n=== Sign in to your Google account in the window that opened. ===")
-    print("Waiting for you to reach the Gemini chat page… (up to %d s)\n" % timeout_s)
+    print("\n" + "=" * 64, flush=True)
+    print("  Sign in to your Google account in the window that just opened.")
+    print("  Leave it open - it closes by itself once you're signed in.")
+    print("  (waits up to %d seconds)" % timeout_s)
+    print("=" * 64 + "\n", flush=True)
 
-    logged_in = False
-    for _ in range(timeout_s // 2):
+    psid = None
+    jar = {}
+    for _ in range(max(1, timeout_s // 2)):
+        # Stop early if the user closed the window.
+        if not ctx.pages:
+            break
         try:
-            if await page.query_selector(EDITOR):
-                logged_in = True
-                break
+            cookies = await ctx.cookies("https://gemini.google.com")
+            jar = {c["name"]: c["value"] for c in cookies}
+            if _valid_psid(jar):
+                # Let the session settle so __Secure-1PSIDTS is captured too.
+                await asyncio.sleep(2)
+                if ctx.pages:
+                    cookies = await ctx.cookies("https://gemini.google.com")
+                    jar = {c["name"]: c["value"] for c in cookies}
+                psid = _valid_psid(jar)
+                if psid:
+                    break
         except Exception:
             pass
         await asyncio.sleep(2)
 
-    cookies = await ctx.cookies("https://gemini.google.com")
-    jar = {c["name"]: c["value"] for c in cookies}
-    await ctx.close()
+    try:
+        await ctx.close()
+    except Exception:
+        pass
     await pw.stop()
 
-    psid = jar.get("__Secure-1PSID")
     if not psid:
-        print("Login not detected / no session cookie found. Make sure you finished signing in, then re-run.")
+        print("\nLogin not completed - no session cookie was captured.")
+        print("Re-run and finish signing in (the window closes on its own once you're in).")
         return 1
 
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
@@ -76,10 +111,7 @@ async def main(timeout_s: int = 300) -> int:
         json.dump({"secure_1psid": psid,
                    "secure_1psidts": jar.get("__Secure-1PSIDTS", ""),
                    "all": jar}, f, indent=2)
-    print(f"\n✅ Logged in — saved {len(jar)} cookies to {OUT}")
-    if not logged_in:
-        print("(Note: didn't detect the chat editor, but a session cookie was captured. "
-              "If the server says not logged in, re-run login.)")
+    print(f"\n[OK] Signed in - saved {len(jar)} cookies. Return to the chat; it's ready.", flush=True)
     return 0
 
 

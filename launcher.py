@@ -10,9 +10,10 @@ Dunamis-Linux.sh) — it calls this. On first run it:
 then starts the server and opens the web chat in your browser. Subsequent
 runs skip straight to starting the server.
 
-Requires Python 3.10+ already installed and on PATH.
+Requires Python 3.11+ already installed and on PATH.
 """
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -20,11 +21,57 @@ import time
 import webbrowser
 from pathlib import Path
 
+MIN_PY = (3, 11)  # gemini_webapi needs StrEnum (Python 3.11+)
+
 ROOT = Path(__file__).resolve().parent
 VENV = ROOT / ".venv"
 REQ = ROOT / "requirements.txt"
 PORT = int(os.environ.get("DUNAMIS_PORT", "6970"))
 COOKIES = Path(os.path.expanduser("~")) / ".dunamis" / "gemini_cookies.json"
+
+
+def _py_version(exe) -> tuple:
+    try:
+        out = subprocess.check_output(
+            [str(exe), "-c", "import sys;print('%d.%d' % sys.version_info[:2])"],
+            stderr=subprocess.DEVNULL, text=True).strip()
+        return tuple(int(x) for x in out.split("."))
+    except Exception:
+        return (0, 0)
+
+
+def _find_newer_python():
+    """Locate a Python >= MIN_PY interpreter, returning its executable path."""
+    tried = []
+    if os.name == "nt":
+        for v in ("3.13", "3.12", "3.11"):
+            tried.append(["py", "-" + v])
+    for name in ("python3.13", "python3.12", "python3.11"):
+        tried.append([name])
+    for cmd in tried:
+        try:
+            exe = subprocess.check_output(
+                cmd + ["-c", "import sys;print(sys.executable)"],
+                stderr=subprocess.DEVNULL, text=True).strip()
+            if exe and _py_version(exe) >= MIN_PY:
+                return exe
+        except Exception:
+            continue
+    return None
+
+
+def ensure_python_version():
+    """We need Python 3.11+. If we're older, re-exec with a newer one if we can find it."""
+    if sys.version_info[:2] >= MIN_PY:
+        return
+    newer = _find_newer_python()
+    if newer and os.path.abspath(newer) != os.path.abspath(sys.executable):
+        print(f"Python {sys.version_info.major}.{sys.version_info.minor} is too old; "
+              f"re-launching with {newer} (need 3.11+)...")
+        os.execv(newer, [newer, os.path.abspath(__file__)])
+    sys.exit("Python 3.11+ is required.\n"
+             "  Windows/macOS: install from https://www.python.org/downloads/\n"
+             "  Ubuntu 22.04:  sudo apt install python3.12 python3.12-venv  (or python3.11)")
 
 
 def venv_python() -> Path:
@@ -37,11 +84,15 @@ def run(cmd, **kw):
 
 
 def ensure_venv():
-    if venv_python().exists():
+    vpy = venv_python()
+    if vpy.exists() and _py_version(vpy) >= MIN_PY:
         return
+    if VENV.exists():
+        print("Recreating virtual environment (needs Python 3.11+)...")
+        shutil.rmtree(VENV, ignore_errors=True)
     print("[1/3] Creating virtual environment (.venv)...")
     if run([sys.executable, "-m", "venv", str(VENV)]) != 0:
-        sys.exit("Could not create a virtual environment. Is Python 3.10+ installed?")
+        sys.exit("Could not create a virtual environment. Is Python 3.11+ installed?")
 
 
 def ensure_deps():
@@ -79,6 +130,7 @@ def open_browser_later(url, delay=3.5):
 
 def main():
     os.chdir(ROOT)
+    ensure_python_version()
     ensure_venv()
     ensure_deps()
     ensure_login()

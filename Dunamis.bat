@@ -15,7 +15,7 @@ pause
 exit /b 0
 
 :nopy
-echo Python 3.10+ is required and was not found on PATH.
+echo Python 3.11+ is required and was not found on PATH.
 echo Install it from https://www.python.org/downloads/ and tick "Add Python to PATH".
 pause
 exit /b 1

@@ -2,7 +2,7 @@
 fastapi>=0.110.0
 uvicorn>=0.29.0
 pydantic>=2.0.0
-gemini_webapi>=1.0.0
+gemini_webapi==1.20.0   # pinned: 1.21+ needs Python 3.11 (StrEnum); 1.20.0 supports 3.10 (Ubuntu 22.04) and is the tested API
 curl_cffi>=0.7.0        # real Chrome TLS/HTTP2 fingerprint (network stealth)
 playwright>=1.42.0      # one-time Google login window only
 requests>=2.31.0        # for the optional CLI chat (chat.py)

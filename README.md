@@ -15,9 +15,11 @@ Dunamis v3  ──►  gemini.google.com   (your logged-in account, keyless)
 
 ## Quick start (one click)
 
-**Prerequisite:** Python 3.10+ installed and on PATH
+**Prerequisite:** Python **3.11+** installed and on PATH
 ([python.org/downloads](https://www.python.org/downloads/) — on Windows tick
-*"Add Python to PATH"*).
+*"Add Python to PATH"*). On Ubuntu 22.04 (ships 3.10):
+`sudo apt install python3.12 python3.12-venv`. The launcher auto-selects a
+3.11+ interpreter if several are installed.
 
 | OS | Do this |
 |----|---------|
@@ -102,7 +104,7 @@ requests. Personal-use, moderate-volume, trusted-network tool.
 
 | Problem | Fix |
 |---------|-----|
-| "Python not found" | Install Python 3.10+ and ensure it's on PATH |
+| "Python not found" | Install Python 3.11+ and ensure it's on PATH |
 | Chat says "not logged in" | Click **Log in**, or run `python -m dunamis.login` |
 | Session expired later | Same — log in again (the launcher/UI will prompt) |
 | Port 6970 in use | `set DUNAMIS_PORT=6971` (Win) / `export DUNAMIS_PORT=6971` then relaunch |

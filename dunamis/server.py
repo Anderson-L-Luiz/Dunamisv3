@@ -35,7 +35,7 @@ from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -304,8 +304,14 @@ _login_lock: Optional[asyncio.Lock] = None
 async def web_chat():
     idx = WEB_DIR / "index.html"
     if idx.is_file():
-        return FileResponse(str(idx))
+        # no-store so a reload always gets the latest UI (never a stale page)
+        return FileResponse(str(idx), headers={"Cache-Control": "no-store"})
     return JSONResponse({"error": "web UI not found"}, status_code=404)
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    return Response(status_code=204)
 
 
 @app.get("/status")
@@ -643,6 +649,12 @@ async def models():
     ]}
 
 
+# Generation timeouts so a stalled upstream surfaces an error instead of an
+# endless spinner. CHUNK = max wait for the next streamed piece; GEN = total.
+CHUNK_TIMEOUT = float(os.environ.get("DUNAMIS_CHUNK_TIMEOUT", "90"))
+GEN_TIMEOUT = float(os.environ.get("DUNAMIS_GEN_TIMEOUT", "300"))
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
     if not client:
@@ -676,7 +688,17 @@ async def chat_completions(request: ChatCompletionRequest):
                     waited = await _human_pace(len(send_text))
                     logger.info("⏱️ human pacing: waited %.1fs before sending", waited)
                     _warm_turn()
-                    async for out in chat.send_message_stream(send_text, files=files or None):
+                    agen = chat.send_message_stream(send_text, files=files or None).__aiter__()
+                    started = time.time()
+                    while True:
+                        try:
+                            out = await asyncio.wait_for(agen.__anext__(), timeout=CHUNK_TIMEOUT)
+                        except StopAsyncIteration:
+                            break
+                        except asyncio.TimeoutError:
+                            raise GWTimeoutError("Gemini stopped responding")
+                        if time.time() - started > GEN_TIMEOUT:
+                            raise GWTimeoutError("response took too long")
                         cur = out.text or ""
                         if len(cur) > len(acc):
                             delta = cur[len(acc):]
@@ -703,7 +725,12 @@ async def chat_completions(request: ChatCompletionRequest):
             logger.info("⏱️ human pacing: waited %.1fs before sending", waited)
             _warm_turn()
             try:
-                out = await _send_with_retries(chat, send_text, model, files=files)
+                out = await asyncio.wait_for(
+                    _send_with_retries(chat, send_text, model, files=files),
+                    timeout=GEN_TIMEOUT)
+            except asyncio.TimeoutError:
+                raise HTTPException(504, "Gemini did not respond in time — your session may have "
+                                         "expired. Try 'Log in' again, or retry.")
             except Exception as e:
                 logger.error("generate failed: %s", e)
                 raise _http_from_exc(e)

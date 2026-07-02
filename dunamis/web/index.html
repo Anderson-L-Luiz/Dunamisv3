@@ -106,13 +106,14 @@ async function refreshStatus(){
 function banner(msg){ const b=$("#banner"); b.textContent=msg; b.className = msg ? "show":""; }
 
 $("#loginbtn").addEventListener("click", async ()=>{
-  $("#loginbtn").disabled = true; banner("Opening a browser window — sign in to Google there, this page will update automatically…");
-  try{
-    await fetch("/login", {method:"POST"});
-  }catch(e){}
-  // poll for readiness
-  for(let i=0;i<120;i++){ await new Promise(r=>setTimeout(r,2000)); await refreshStatus(); if(loggedIn) break; }
+  $("#loginbtn").disabled = true;
+  banner("A sign-in window is opening on the computer running Dunamis. Sign in there. "
+       + "If it closes right away, you were already signed in — you're good to go. This page updates automatically.");
+  try{ fetch("/login", {method:"POST"}); }catch(e){}
+  // poll for readiness (login can take a couple of minutes)
+  for(let i=0;i<150;i++){ await new Promise(r=>setTimeout(r,2000)); await refreshStatus(); if(loggedIn) break; }
   $("#loginbtn").disabled = false;
+  if(loggedIn) banner("");
 });
 
 $("#newbtn").addEventListener("click", async ()=>{
@@ -191,14 +192,21 @@ async function send(){
   busy=true; $("#send").disabled=true;
   const bot = bubble("bot","",null); bot.el.classList.add("streaming");
   let full="";
+  const ctrl = new AbortController();
+  let idle;
+  const resetIdle = ()=>{ clearTimeout(idle); idle = setTimeout(()=>ctrl.abort(), 110000); };
   try{
+    resetIdle();
     const resp = await fetch("/v1/chat/completions",{
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({model:state.model, messages:state.history, stream:true})
+      body: JSON.stringify({model:state.model, messages:state.history, stream:true}),
+      signal: ctrl.signal
     });
+    if(!resp.ok || !resp.body){ throw new Error("server error " + resp.status); }
     const reader = resp.body.getReader(); const dec=new TextDecoder(); let buf="";
     while(true){
       const {value,done}=await reader.read(); if(done) break;
+      resetIdle();
       buf += dec.decode(value,{stream:true});
       const parts = buf.split("\n\n"); buf = parts.pop();
       for(const p of parts){
@@ -217,9 +225,14 @@ async function send(){
     if(full){ state.history.push({role:"assistant", content: full}); }
     else { bot.span.textContent="(empty response)"; }
   }catch(e){
-    bot.el.remove(); bubble("err", String(e.message||e));
+    bot.el.remove();
+    let msg = String((e && (e.message||e.name)) || e);
+    if(e && e.name==="AbortError") msg = "No response in time — the server may be busy, or your session expired. Try again, or click Log in.";
+    else if(/failed to fetch|networkerror|load failed/i.test(msg)) msg = "Can't reach the server. Make sure Dunamis is running (Dunamis.bat), then reload this page.";
+    bubble("err", msg);
     state.history.pop(); // drop the unanswered user turn
   }finally{
+    clearTimeout(idle);
     busy=false; $("#send").disabled=false; inputEl.focus();
   }
 }

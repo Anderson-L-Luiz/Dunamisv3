@@ -33,12 +33,23 @@ web chat opens in your browser. Later launches skip straight to starting.
 
 That's it — keep the console window open; close it to stop the server.
 
-## The web chat (with Ctrl+V images)
+## Using the chat
 
-Opens at `http://localhost:6970/`. You can:
-- **Paste images with Ctrl+V** (also drag-and-drop, or the 📎 button), then ask about them.
-- Stream replies live, switch model (Flash / Pro / Thinking), and start a new chat.
-- It keeps conversation context (one ongoing Gemini conversation, not a fresh one each turn).
+The web chat opens at **`http://localhost:6970/`**. A green dot (top-right) means
+it's ready; red means you need to log in.
+
+- **Send a message** — type and press **Enter** (Shift+Enter for a newline).
+  Replies **stream in live**. It keeps context across turns (one ongoing Gemini
+  conversation, not a fresh one each message).
+- **Attach images** — **Ctrl+V** to paste, **drag** one in, or tap the **📎**
+  button (on a phone this opens your photo picker). Then ask about them.
+- **Model** — switch **Flash** (fast) / **Pro** (smart) / **Thinking** in the
+  top-left dropdown.
+- **New chat** — clears the conversation and starts fresh.
+- **Log in** — opens a Google sign-in window (on the machine running the
+  server). If it closes instantly, you were already signed in — that's fine.
+- **Log off** — signs out and **clears the saved session + browser profile**, so
+  the next **Log in** lets you choose a **different Google account**.
 
 ## Broadcast on your network
 
@@ -54,6 +65,11 @@ OpenAI API base    : http://<this-address>:6970/v1   (any dummy key)
 Point **any OpenAI-compatible app** at `http://<this-address>:6970/v1` (use any
 non-empty API key). Models: `gemini-3.0-flash`, `gemini-3.0-pro`,
 `gemini-3.0-thinking` (aliases `flash` / `pro` / `thinking`).
+
+**From your phone (or any device):** open the `http://<this-address>:6970/` URL
+in the device's browser to use the full chat. In the browser menu, choose
+**"Add to Home Screen"** to get an app-like icon that opens it fullscreen. (Your
+PC must be running Dunamis and on the same network — or reachable via a tunnel.)
 
 > ⚠️ The API has **no authentication** — only broadcast on a trusted network.
 > To reach it remotely, put it behind a tunnel (Tailscale / Cloudflare Tunnel).
@@ -81,7 +97,7 @@ Keyless and light at runtime (pure HTTP via `gemini_webapi`; a browser is used
 - **Chrome TLS/HTTP-2 fingerprint** via `curl_cffi` (impersonates Chrome 145).
 - **Full cookie jar** + Chrome client-hint headers.
 - **Human pacing** (randomized think/type delay + min gap; never bursts).
-- **Browser-like side-traffic** (idle telemetry beacon + benign batchexecute).
+- **Browser-like side-traffic**, kept minimal by default to limit account load.
 - **Streaming**, **conversation continuity**, **image input**, and resilient
   error handling (auth-expiry → clear message, retries on transient blocks).
 
@@ -97,8 +113,10 @@ requests. Personal-use, moderate-volume, trusted-network tool.
 | `DUNAMIS_PACE` | `1` | human pacing on/off |
 | `DUNAMIS_MIN_GAP` | `3` | min seconds between requests |
 | `DUNAMIS_MIMIC` | `1` | browser-like side-traffic on/off |
-| `DUNAMIS_IMPERSONATE` | `chrome145` | curl_cffi target |
-| `SECURE_1PSID` / `SECURE_1PSIDTS` | – | provide cookies directly (skip login) |
+| `DUNAMIS_WARM_PROB` | `0.15` | chance of an extra benign request per turn (lower = less account load) |
+| `DUNAMIS_GEN_TIMEOUT` | `300` | max seconds to wait for a reply before erroring |
+| `DUNAMIS_IMPERSONATE` | `chrome145` | curl_cffi impersonation target |
+| `SECURE_1PSID` / `SECURE_1PSIDTS` | – | provide cookies directly (skip the login window) |
 
 ## Troubleshooting
 
@@ -106,7 +124,11 @@ requests. Personal-use, moderate-volume, trusted-network tool.
 |---------|-----|
 | "Python not found" | Install Python 3.11+ and ensure it's on PATH |
 | Chat says "not logged in" | Click **Log in**, or run `python -m dunamis.login` |
-| Session expired later | Same — log in again (the launcher/UI will prompt) |
+| Session expired later | Same — click **Log in** again (auto-rotation usually keeps it alive) |
+| Want to switch Google account | Click **Log off**, then **Log in** and sign in with the other account |
+| Reply spins with no answer | Server busy or session expired — wait, retry, or click **Log in** |
+| "temporary Google service issue" (error 1100) | Google is throttling after too many fast requests — wait a bit, then retry |
+| "Can't reach the server" in the chat | The server isn't running — start it (`Dunamis.bat`/`.command`/`.sh`) and reload |
 | Port 6970 in use | `set DUNAMIS_PORT=6971` (Win) / `export DUNAMIS_PORT=6971` then relaunch |
 | macOS "cannot be opened" | right-click `Dunamis.command` → Open (once) |
 
@@ -117,7 +139,7 @@ Dunamis.bat / Dunamis.command / Dunamis-Linux.sh   one-click launchers
 launcher.py                                         cross-platform bootstrap (.venv + deps + login + run)
 requirements.txt
 dunamis/
-  server.py         keyless API + web chat + broadcast + /login
+  server.py         keyless API + web chat + broadcast + login/logout
   login.py          one-time Google login (harvests session cookies)
   curl_transport.py Chrome TLS/HTTP2 impersonation transport
   chat.py           optional CLI chat (has /image too)

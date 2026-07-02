@@ -96,26 +96,36 @@ def ensure_venv():
 
 
 def ensure_deps():
-    marker = VENV / ".deps_ok"
-    if marker.exists() and marker.stat().st_mtime >= REQ.stat().st_mtime:
-        return
-    print("[2/3] Installing dependencies (first run can take a few minutes)...")
+    if not REQ.is_file():
+        sys.exit(f"requirements.txt is missing next to launcher.py ({REQ}). "
+                 "Restore it (re-download / re-clone the repo) and retry.")
     py = str(venv_python())
-    run([py, "-m", "pip", "install", "--upgrade", "pip"])
-    if run([py, "-m", "pip", "install", "-r", str(REQ)]) != 0:
-        sys.exit("Dependency install failed. Check your internet connection and retry.")
-    # Browser used only for the one-time Google login.
-    if run([py, "-m", "playwright", "install", "chromium"]) != 0:
-        print("  (note: 'playwright install chromium' failed — login window may not open; "
-              "the rest still works if you already have cookies.)")
-    marker.write_text("ok")
+    marker = VENV / ".deps_ok"
+    if not (marker.exists() and marker.stat().st_mtime >= REQ.stat().st_mtime):
+        print("[2/3] Installing dependencies (first run can take a few minutes)...")
+        run([py, "-m", "pip", "install", "--upgrade", "pip"])
+        if run([py, "-m", "pip", "install", "-r", str(REQ)]) != 0:
+            sys.exit("Dependency install failed. Check your internet connection and retry.")
+        marker.write_text("ok")
+    # Browser for the one-time login. Own marker so a failed install is retried
+    # on the next launch instead of being permanently skipped.
+    pw_marker = VENV / ".pw_ok"
+    if not pw_marker.exists():
+        if run([py, "-m", "playwright", "install", "chromium"]) == 0:
+            pw_marker.write_text("ok")
+        else:
+            print("  (note: 'playwright install chromium' failed — the login window may not "
+                  "open. It'll retry next launch; existing cookies still work.)")
 
 
 def ensure_login():
     if COOKIES.is_file():
         return
     print("[3/3] First run — opening a window to sign in to your Google account...")
-    run([str(venv_python()), "-m", "dunamis.login"], cwd=str(ROOT))
+    rc = run([str(venv_python()), "-m", "dunamis.login"], cwd=str(ROOT))
+    if rc != 0 or not COOKIES.is_file():
+        print("\nLogin wasn't completed - no cookies were saved. The server will still")
+        print("start; just click 'Log in' in the web chat when it opens.\n")
 
 
 def open_browser_later(url, delay=3.5):

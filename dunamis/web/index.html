@@ -132,7 +132,9 @@ function renderTray(){
   trayEl.innerHTML = "";
   state.attachments.forEach((a,i)=>{
     const c=document.createElement("div"); c.className="chip";
-    c.innerHTML = `<img src="${a.url}" title="${a.name}"><span class="x" data-i="${i}">×</span>`;
+    const img=document.createElement("img"); img.src=a.url; img.title=a.name||"";
+    const x=document.createElement("span"); x.className="x"; x.dataset.i=i; x.textContent="×";
+    c.appendChild(img); c.appendChild(x);
     trayEl.appendChild(c);
   });
 }
@@ -158,9 +160,12 @@ inputEl.addEventListener("drop", e=>{ [...(e.dataTransfer.files||[])].forEach(ad
 function bubble(cls, text, thumbs){
   const d=document.createElement("div"); d.className="msg "+cls;
   const who = cls==="user"?"you":(cls==="err"?"error":"gemini");
-  let html = `<div class="who">${who}</div>`;
-  if(thumbs && thumbs.length){ html += `<div class="thumbs">${thumbs.map(u=>`<img src="${u}">`).join("")}</div>`; }
-  d.innerHTML = html;
+  const w=document.createElement("div"); w.className="who"; w.textContent=who; d.appendChild(w);
+  if(thumbs && thumbs.length){
+    const t=document.createElement("div"); t.className="thumbs";
+    thumbs.forEach(u=>{ const im=document.createElement("img"); im.src=u; t.appendChild(im); });
+    d.appendChild(t);
+  }
   const span=document.createElement("span"); span.textContent=text||""; d.appendChild(span);
   messagesEl.appendChild(d); messagesEl.scrollTop=messagesEl.scrollHeight;
   return {el:d, span};

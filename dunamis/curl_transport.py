@@ -112,7 +112,10 @@ class _Resp:
         return self._r.json()
 
     def raise_for_status(self):
-        return None
+        # Delegate to curl_cffi so non-2xx actually raises (gemini_webapi relies
+        # on this to catch failed uploads / token fetches instead of silently
+        # using an error body).
+        return self._r.raise_for_status()
 
 
 class _StreamResp:
@@ -188,20 +191,30 @@ class CurlCffiClient:
             h.update(dict(extra))
         return h
 
-    def _common(self):
+    def _common(self, extra_cookies=None):
+        jar = _cookie_dict(self._cookies)
+        if extra_cookies is not None:
+            # A per-call jar (e.g. rotate_1psidts passes cookies=) must be honored.
+            try:
+                jar.update(_cookie_dict(extra_cookies))      # httpx.Cookies
+            except Exception:
+                try:
+                    jar.update(dict(extra_cookies))
+                except Exception:
+                    pass
         return dict(impersonate=self._impersonate, timeout=self._timeout,
-                    proxy=self._proxy, verify=self._verify,
-                    cookies=_cookie_dict(self._cookies))
+                    proxy=self._proxy, verify=self._verify, cookies=jar)
 
     # -- requests ------------------------------------------------------------
-    async def get(self, url, params=None, headers=None, **kw):
+    async def get(self, url, params=None, headers=None, cookies=None, **kw):
         r = await self._session.request("GET", _u(url), params=params,
-                                        headers=self._headers(headers), **self._common())
+                                        headers=self._headers(headers),
+                                        **self._common(cookies))
         self._capture(r)
         return _Resp(r)
 
     async def post(self, url, params=None, data=None, headers=None, files=None,
-                   json=None, follow_redirects=None, **kw):
+                   json=None, follow_redirects=None, content=None, cookies=None, **kw):
         extra = {}
         if files is not None:            # multipart (e.g. file upload)
             extra["multipart"] = _to_multipart(files)
@@ -209,17 +222,23 @@ class CurlCffiClient:
             extra["json"] = json
         if follow_redirects is not None:
             extra["allow_redirects"] = follow_redirects
+        # httpx callers pass a raw body as `content` (rotate_1psidts does);
+        # curl_cffi has no `content` kwarg, it uses `data`.
+        if data is None and json is None and files is None and content is not None:
+            data = content
         r = await self._session.request("POST", _u(url), params=params, data=data,
                                         headers=self._headers(headers),
-                                        **self._common(), **extra)
+                                        **self._common(cookies), **extra)
         self._capture(r)
         return _Resp(r)
 
     @asynccontextmanager
-    async def stream(self, method, url, params=None, headers=None, data=None, **kw):
+    async def stream(self, method, url, params=None, headers=None, data=None,
+                     cookies=None, **kw):
         async with self._session.stream(method, _u(url), params=params, data=data,
                                         headers=self._headers(headers),
-                                        **self._common()) as r:
+                                        **self._common(cookies)) as r:
+            self._capture(r)   # capture Set-Cookie at headers time, like httpx
             yield _StreamResp(r, self)
 
     # -- lifecycle -----------------------------------------------------------

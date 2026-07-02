@@ -231,21 +231,35 @@ def _warm_turn():
         _fire(_warm_gems())
 
 
-async def _init_client() -> bool:
-    """(Re)create the keyless Gemini client from saved cookies. Idempotent —
-    called at startup and again after a fresh login. Returns True on success."""
-    global client, _impersonation, _mimic_task
-    if client is not None:
+async def _swap_client(new):
+    """Swap the global client under the generation lock so an in-flight request
+    never has the client closed out from under it. Closes the old one after."""
+    global client
+    old = client
+    if _lock is not None:
+        async with _lock:
+            client = new
+    else:
+        client = new
+    if old is not None and old is not new:
         try:
-            await client.close()
+            await old.close()
         except Exception:
             pass
-        client = None
+
+
+async def _init_client() -> bool:
+    """(Re)create the keyless Gemini client from saved cookies. Idempotent —
+    called at startup and again after a fresh login. Builds the new client
+    first, then swaps it in atomically. On failure the existing client is kept.
+    Returns True on success."""
+    global _impersonation, _mimic_task
 
     psid, psidts = _load_cookies()
     if not psid:
         logger.warning("Not logged in yet. Run  python -m dunamis.login  "
                        "or click 'Log in' in the web chat.")
+        await _swap_client(None)
         return False
 
     if curl_transport is not None and not _impersonation:
@@ -262,17 +276,17 @@ async def _init_client() -> bool:
         jar = _load_full_jar()
         if jar:
             _inject_cookies(c, jar)
-        client = c
-        logger.info("✅ Gemini client ready (keyless). impersonation=%s pacing=%s mimic=%s",
-                    "curl_cffi" if _impersonation else "httpx",
-                    "on" if PACING else "off", "on" if MIMIC else "off")
-        if MIMIC and _mimic_task is None:
-            _mimic_task = _fire(_mimic_loop())
-        return True
     except Exception as e:
-        logger.error("Failed to init Gemini client: %s", e)
-        client = None
+        logger.error("Failed to init Gemini client: %s (keeping existing client)", e)
         return False
+
+    await _swap_client(c)
+    logger.info("✅ Gemini client ready (keyless). impersonation=%s pacing=%s mimic=%s",
+                "curl_cffi" if _impersonation else "httpx",
+                "on" if PACING else "off", "on" if MIMIC else "off")
+    if MIMIC and _mimic_task is None:
+        _mimic_task = _fire(_mimic_loop())
+    return True
 
 
 @asynccontextmanager
@@ -508,8 +522,21 @@ def _msg_text(m) -> str:
     return ""
 
 
+def _img_digest(m) -> str:
+    """Short fingerprint of a message's attached images, so two turns with the
+    same text but different images don't collide to the same ChatSession."""
+    urls = []
+    if isinstance(m.content, list):
+        for p in m.content:
+            if p.type in ("image_url", "input_image") and isinstance(p.image_url, dict):
+                urls.append(p.image_url.get("url") or "")
+    if not urls:
+        return ""
+    return hashlib.sha256("|".join(urls).encode("utf-8", "ignore")).hexdigest()[:16]
+
+
 def _norm(messages) -> list:
-    return [(m.role, _msg_text(m)) for m in messages]
+    return [(m.role, _msg_text(m), _img_digest(m)) for m in messages]
 
 
 def _conv_key(norm_prefix: list, model_id: str) -> str:
@@ -538,7 +565,9 @@ def _resolve_session(request, model, model_id):
         # No trailing user turn — just send the whole thing in a fresh session.
         return client.start_chat(model=model), _build_prompt(request.messages, rf), norm
     prefix = norm[:-1]
-    chat = _sessions.pop(_conv_key(prefix, model_id), None)
+    # .get (not .pop): keep the session cached if this generation fails, so a
+    # retry with the same history still continues instead of re-seeding.
+    chat = _sessions.get(_conv_key(prefix, model_id))
     if chat is not None:
         # Continuation: the session already holds the context.
         return chat, _msg_text(request.messages[-1]) + _schema_instruction(rf), norm

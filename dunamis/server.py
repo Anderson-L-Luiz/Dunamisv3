@@ -363,6 +363,29 @@ async def login():
         return {"status": "ok" if ok else "failed", "logged_in": ok}
 
 
+@app.post("/logout")
+async def logout():
+    """Sign out: drop the in-memory client, delete saved cookies, and wipe the
+    browser login profile so the next 'Log in' is a fresh sign-in — letting you
+    choose a DIFFERENT Google account."""
+    import shutil
+    await _swap_client(None)
+    _sessions.clear()
+    cleared = []
+    try:
+        if os.path.exists(COOKIE_FILE):
+            os.remove(COOKIE_FILE)
+            cleared.append("cookies")
+    except Exception as e:
+        logger.warning("logout: could not remove cookies file: %s", e)
+    profile = os.path.join(os.path.expanduser("~"), ".dunamis", "chrome-profile-v3")
+    if os.path.isdir(profile):
+        shutil.rmtree(profile, ignore_errors=True)
+        cleared.append("browser profile")
+    logger.info("🔓 Logged off (cleared: %s).", ", ".join(cleared) or "nothing")
+    return {"status": "ok", "logged_in": False, "cleared": cleared}
+
+
 # ─── OpenAI-compatible models ─────────────────────────────────────────────────
 class ContentPart(BaseModel):
     type: str = "text"

@@ -69,6 +69,7 @@
     <span class="spacer"></span>
     <span id="status"><span class="dot" id="dot"></span><span id="statustext">checking…</span></span>
     <button id="loginbtn" title="Sign in to your Google account">Log in</button>
+    <button id="logoffbtn" title="Sign out and clear the saved session (to switch accounts)">Log off</button>
     <button id="newbtn" title="Start a fresh conversation">New chat</button>
   </header>
   <div id="banner"></div>
@@ -114,6 +115,17 @@ $("#loginbtn").addEventListener("click", async ()=>{
   for(let i=0;i<150;i++){ await new Promise(r=>setTimeout(r,2000)); await refreshStatus(); if(loggedIn) break; }
   $("#loginbtn").disabled = false;
   if(loggedIn) banner("");
+});
+
+$("#logoffbtn").addEventListener("click", async ()=>{
+  if(!confirm("Log off and clear the saved Google session? You'll need to sign in again (you can pick a different account).")) return;
+  $("#logoffbtn").disabled = true;
+  banner("Logging off…");
+  try{ await fetch("/logout", {method:"POST"}); }catch(e){}
+  state.history=[]; messagesEl.innerHTML=""; state.attachments=[]; renderTray();
+  await refreshStatus();
+  banner("Logged off. Click 'Log in' to sign in — you can choose a different Google account.");
+  $("#logoffbtn").disabled = false;
 });
 
 $("#newbtn").addEventListener("click", async ()=>{

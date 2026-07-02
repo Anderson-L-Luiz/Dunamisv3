@@ -85,6 +85,13 @@ _bg_tasks: set = set()
 _mimic_task = None
 _mimic_stats = {"beacons": 0, "warms": 0}
 
+# Side-traffic intensity — kept LOW to minimize load on your Google account.
+# WARM_PROB: chance a turn also fires a benign fetch_gems batchexecute.
+# Beacons (harmless play/log telemetry) and idle warm-ups are widely spaced.
+WARM_PROB = float(os.environ.get("DUNAMIS_WARM_PROB", "0.15"))
+_BEACON_MIN, _BEACON_MAX = 90.0, 180.0     # seconds between idle telemetry beacons
+_WARM_MIN, _WARM_MAX = 900.0, 1800.0       # seconds between idle benign batchexecute warm-ups
+
 # ─── Model mapping ────────────────────────────────────────────────────────────
 MODEL_MAP = {
     "flash": Model.G_3_0_FLASH, "gemini-3.0-flash": Model.G_3_0_FLASH, "fast": Model.G_3_0_FLASH,
@@ -212,10 +219,10 @@ async def _mimic_loop():
         loop = asyncio.get_event_loop()
         last_warm = loop.time()
         while True:
-            await asyncio.sleep(random.uniform(30.0, 75.0))
+            await asyncio.sleep(random.uniform(_BEACON_MIN, _BEACON_MAX))
             await _beacon()
-            # Every few minutes also do a real benign batchexecute + session warm.
-            if loop.time() - last_warm > random.uniform(240.0, 480.0):
+            # Occasionally (every ~15-30 min) do a real benign batchexecute warm.
+            if loop.time() - last_warm > random.uniform(_WARM_MIN, _WARM_MAX):
                 await _warm_gems()
                 last_warm = loop.time()
     except asyncio.CancelledError:
@@ -227,7 +234,7 @@ async def _mimic_loop():
 def _warm_turn():
     """~60% of turns, fire a benign batchexecute concurrently with the send, like
     a browser brackets StreamGenerate with other RPCs."""
-    if MIMIC and client is not None and random.random() < 0.6:
+    if MIMIC and client is not None and random.random() < WARM_PROB:
         _fire(_warm_gems())
 
 
